@@ -1,0 +1,29 @@
+{
+  "name": "event-team-builder",
+  "version": "1.0.0",
+  "description": "Event Team Builder - Full-stack campus event operations workspace with React, Node.js, Express, and MongoDB",
+  "main": "server/index.js",
+  "scripts": {
+    "db:start": "node scripts/mongod.js start",
+    "db:stop": "node scripts/mongod.js stop",
+    "db:status": "node scripts/mongod.js status",
+    "db:verify": "node scripts/verify-mongodb.js",
+    "server": "node server/index.js",
+    "client": "npm run dev --prefix client",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build": "npm run build --prefix client",
+    "start": "node server/index.js",
+    "seed": "node server/seed/runSeed.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.9.5"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
