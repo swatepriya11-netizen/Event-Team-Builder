@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { ArrowRight, CheckCircle2, Sparkles, KeyRound, LogOut } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Sparkles, KeyRound, LogOut, ShieldCheck, Users } from 'lucide-react';
 import api from '../services/api';
 
 const DEMO_EMAIL = 'coordinator@campus.edu';
 const DEMO_PASSWORD = 'password123';
+const DEMO_VOLUNTEER_EMAIL = 'ananya.shah@campus.edu';
+const DEMO_VOLUNTEER_PASSWORD = 'password123';
 
 export default function AccountPage({
   onNavigate,
@@ -16,6 +18,8 @@ export default function AccountPage({
   const [email, setEmail] = useState(DEMO_EMAIL);
   const [password, setPassword] = useState(DEMO_PASSWORD);
   const [name, setName] = useState('Campus Coordinator');
+  const [accountRole, setAccountRole] = useState('Volunteer');
+  const [coordinatorCode, setCoordinatorCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -27,7 +31,15 @@ export default function AccountPage({
     try {
       let res;
       if (isRegister) {
-        res = await api.register({ name, email, password });
+        res = await api.register({
+          name,
+          email,
+          password,
+          role: accountRole,
+          // Only sent for coordinator signup; the API verifies it against the
+          // server's COORDINATOR_INVITE_CODE and rejects a mismatch.
+          coordinatorCode: accountRole === 'Coordinator' ? coordinatorCode : undefined,
+        });
       } else {
         res = await api.login({ email, password });
       }
@@ -43,14 +55,14 @@ export default function AccountPage({
 
   // Signs in through the real API using the seeded demo account, so the demo
   // path is subject to exactly the same credential check as manual login.
-  const handleQuickDemoLogin = async () => {
-    setEmail(DEMO_EMAIL);
-    setPassword(DEMO_PASSWORD);
+  const handleQuickDemoLogin = async (demoEmail = DEMO_EMAIL, demoPassword = DEMO_PASSWORD) => {
+    setEmail(demoEmail);
+    setPassword(demoPassword);
     setLoading(true);
     setError(null);
 
     try {
-      const res = await api.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
+      const res = await api.login({ email: demoEmail, password: demoPassword });
       onLoginSuccess(res.user, res.token);
       onNavigate('/dashboard');
     } catch (err) {
@@ -171,7 +183,9 @@ export default function AccountPage({
               <h2 className="form-title">{isRegister ? 'Create an account' : 'Welcome back'}</h2>
               <p className="form-subtitle">
                 {isRegister
-                  ? 'Join your campus event leadership team.'
+                  ? accountRole === 'Coordinator'
+                    ? 'Create an event admin account. This requires the coordinator invite code configured on the server.'
+                    : 'Volunteer accounts only see their own assignment. Your coordinator links your profile using this email.'
                   : 'Sign in to continue to your event workspace.'}
               </p>
             </div>
@@ -188,6 +202,36 @@ export default function AccountPage({
                     placeholder="Alex Morgan"
                     className="form-input"
                   />
+                </div>
+              )}
+
+              {isRegister && (
+                <div className="form-group">
+                  <label className="form-label">Account type</label>
+                  <div className="role-picker">
+                    <button
+                      type="button"
+                      className={`role-option ${accountRole === 'Volunteer' ? 'active' : ''}`}
+                      onClick={() => {
+                        setAccountRole('Volunteer');
+                        setError(null);
+                      }}
+                    >
+                      <Users size={15} />
+                      Volunteer
+                    </button>
+                    <button
+                      type="button"
+                      className={`role-option ${accountRole === 'Coordinator' ? 'active' : ''}`}
+                      onClick={() => {
+                        setAccountRole('Coordinator');
+                        setError(null);
+                      }}
+                    >
+                      <ShieldCheck size={15} />
+                      Coordinator
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -229,6 +273,24 @@ export default function AccountPage({
                 />
               </div>
 
+              {isRegister && accountRole === 'Coordinator' && (
+                <div className="form-group">
+                  <label className="form-label">Coordinator invite code</label>
+                  <input
+                    type="password"
+                    required
+                    value={coordinatorCode}
+                    onChange={(e) => setCoordinatorCode(e.target.value)}
+                    placeholder="Paste the code from the server .env"
+                    className="form-input"
+                  />
+                  <p className="role-hint">
+                    Set by <code>COORDINATOR_INVITE_CODE</code> in the server&apos;s
+                    <code> .env</code> file.
+                  </p>
+                </div>
+              )}
+
               {error && (
                 <div className="error-alert">
                   <span>{error}</span>
@@ -247,7 +309,7 @@ export default function AccountPage({
               <div className="quick-demo-box">
                 <button
                   type="button"
-                  onClick={handleQuickDemoLogin}
+                  onClick={() => handleQuickDemoLogin()}
                   disabled={loading}
                   className="btn btn-secondary quick-demo-btn"
                 >
@@ -255,6 +317,16 @@ export default function AccountPage({
                   <span>
                     {loading ? 'Signing in...' : '1-Click Coordinator Demo'}
                   </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickDemoLogin(DEMO_VOLUNTEER_EMAIL, DEMO_VOLUNTEER_PASSWORD)}
+                  disabled={loading}
+                  className="btn btn-secondary quick-demo-btn"
+                  style={{ marginTop: 8 }}
+                >
+                  <Users size={15} color="#38bdf8" />
+                  <span>1-Click Volunteer Demo</span>
                 </button>
               </div>
 
@@ -435,6 +507,44 @@ export default function AccountPage({
           border-radius: var(--radius-sm);
           font-size: 13px;
           margin-bottom: 14px;
+        }
+        .role-picker {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+        .role-option {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          padding: 10px;
+          border-radius: var(--radius-sm);
+          border: 1px solid var(--border-medium);
+          background: transparent;
+          color: var(--text-secondary);
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .role-option:hover {
+          color: var(--text-main);
+          border-color: var(--accent-primary);
+        }
+        .role-option.active {
+          color: #4ade80;
+          border-color: rgba(34, 197, 94, 0.55);
+          background: rgba(34, 197, 94, 0.12);
+        }
+        .role-hint {
+          margin-top: 6px;
+          font-size: 11px;
+          line-height: 1.5;
+          color: var(--text-muted);
+        }
+        .role-hint code {
+          color: var(--text-secondary);
         }
         .toggle-auth {
           display: flex;

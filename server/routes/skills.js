@@ -4,6 +4,7 @@ const Skill = require('../models/Skill');
 const memoryStore = require('../store/memoryStore');
 const { getDBStatus } = require('../config/db');
 const { slugify } = require('../lib/ids');
+const { requireRole } = require('../middleware/auth');
 
 /**
  * The normalised skill vocabulary. Referenced by id from Volunteer.skillIds and
@@ -25,7 +26,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/skills - create on demand (the UI can add a skill while editing)
-router.post('/', async (req, res) => {
+router.post('/', requireRole('Coordinator'), async (req, res) => {
   try {
     if (!req.body?.name) return res.status(400).json({ error: 'Skill name is required' });
     const { connected } = getDBStatus();

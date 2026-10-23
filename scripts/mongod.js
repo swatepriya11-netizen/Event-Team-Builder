@@ -20,7 +20,11 @@ const os = require('os');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
-const DBPATH = process.env.MONGOD_DBPATH || 'C:\\Users\\misha\\mongodb-data';
+const DBPATH =
+  process.env.MONGOD_DBPATH ||
+  (os.platform() === 'win32'
+    ? 'C:\\Users\\misha\\mongodb-data'
+    : path.join(os.homedir(), '.event-team-builder', 'mongodb-data'));
 const PORT = process.env.MONGOD_PORT || '27017';
 const HOST = process.env.MONGOD_HOST || '127.0.0.1';
 
@@ -42,11 +46,6 @@ function findBinary() {
 }
 
 function isListening() {
-  try {
-    execFileSync('netstat', ['-ano'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    /* netstat unavailable; fall through to the TCP probe */
-  }
   const net = require('net');
   return new Promise((resolve) => {
     const socket = net.connect({ host: HOST, port: Number(PORT) });

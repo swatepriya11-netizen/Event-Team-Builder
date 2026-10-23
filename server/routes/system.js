@@ -13,6 +13,7 @@ const Assignment = require('../models/Assignment');
 const Event = require('../models/Event');
 const Skill = require('../models/Skill');
 const User = require('../models/User');
+const { isCoordinator } = require('../lib/access');
 
 // GET MongoDB connection & system health status
 router.get('/status', async (req, res) => {
@@ -36,8 +37,14 @@ router.get('/status', async (req, res) => {
       counts = memoryStore.getCounts(eventId);
     }
 
+    // The connection string and driver error are coordinator-only operational
+    // details; volunteers only need to know whether the app is in fallback mode.
+    const safe = isCoordinator(req.user)
+      ? status
+      : { ...status, uri: null, lastError: null };
+
     res.json({
-      ...status,
+      ...safe,
       counts,
       eventId: eventId || null,
       timestamp: new Date(),

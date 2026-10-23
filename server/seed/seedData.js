@@ -171,6 +171,17 @@ const users = [
     role: 'Coordinator',
     campusOrg: 'Student Cultural Board',
   },
+  {
+    // Volunteer demo account. Linked to vol-1 (Ananya Shah), who leads the
+    // Media team at Aurelia and is assigned to a task, so the restricted portal
+    // has something real to show.
+    email: 'ananya.shah@campus.edu',
+    name: 'Ananya Shah',
+    password: 'password123',
+    role: 'Volunteer',
+    volunteerId: 'vol-1',
+    campusOrg: 'Student Cultural Board',
+  },
 ];
 
 module.exports = {
@@ -189,4 +200,5 @@ module.exports = {
   initialTasks: tasks,
   initialUsers: users,
   DEMO_LOGIN: { email: users[0].email, password: users[0].password },
+  DEMO_VOLUNTEER_LOGIN: { email: users[1].email, password: users[1].password },
 };

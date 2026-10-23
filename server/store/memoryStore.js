@@ -392,6 +392,7 @@ class MemoryStore {
         password: await bcrypt.hash(seed.password, SALT_ROUNDS),
         role: seed.role,
         campusOrg: seed.campusOrg,
+        volunteerId: seed.volunteerId || null,
         createdAt: new Date(),
         lastLoginAt: null,
       });
@@ -409,6 +410,19 @@ class MemoryStore {
     return this.users.find((u) => String(u._id) === String(id)) || null;
   }
 
+  /** Find the volunteer person record whose email matches an account. */
+  findVolunteerByEmail(email) {
+    const wanted = String(email || '').toLowerCase().trim();
+    return this.volunteers.find((v) => String(v.email).toLowerCase() === wanted) || null;
+  }
+
+  /** Persist the account -> volunteer link while running in fallback mode. */
+  setUserVolunteerId(id, volunteerId) {
+    const user = this.users.find((u) => String(u._id) === String(id));
+    if (user) user.volunteerId = volunteerId || null;
+    return user || null;
+  }
+
   async countUsers() {
     await this._ensureUsers();
     return this.users.length;
@@ -424,6 +438,7 @@ class MemoryStore {
       password: await bcrypt.hash(String(data.password), SALT_ROUNDS),
       role: data.role || 'Volunteer',
       campusOrg: data.campusOrg || 'Student Activities Board',
+      volunteerId: data.volunteerId || null,
       createdAt: new Date(),
       lastLoginAt: null,
     };
@@ -457,6 +472,7 @@ class MemoryStore {
       password: d.password,
       role: d.role,
       campusOrg: d.campusOrg,
+      volunteerId: d.volunteerId || null,
       createdAt: d.createdAt,
       lastLoginAt: d.lastLoginAt ?? null,
     }));

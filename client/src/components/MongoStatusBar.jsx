@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Database, CheckCircle, AlertTriangle, X, RefreshCw, Server } from 'lucide-react';
 import api, { endSession } from '../services/api';
 
@@ -50,6 +51,21 @@ export default function MongoStatusBar({ status, onRefresh, canManage = false })
     }
   };
 
+  // Close on Escape and stop the page behind the overlay from scrolling.
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isOpen]);
+
   return (
     <>
       <div 
@@ -71,7 +87,11 @@ export default function MongoStatusBar({ status, onRefresh, canManage = false })
         </span>
       </div>
 
-      {isOpen && (
+      {/* Rendered into <body> because both navbars use backdrop-filter, which
+          makes them the containing block for position:fixed children. Without
+          the portal the overlay is clamped to the 68px header and the dialog is
+          pushed off the top of the screen. */}
+      {isOpen && createPortal(
         <div className="modal-backdrop" onClick={() => setIsOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
@@ -176,7 +196,8 @@ export default function MongoStatusBar({ status, onRefresh, canManage = false })
               </form>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <style>{`

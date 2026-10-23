@@ -6,6 +6,7 @@ import VolunteersPage from './pages/VolunteersPage';
 import TeamBuilderPage from './pages/TeamBuilderPage';
 import TasksShiftsPage from './pages/TasksShiftsPage';
 import SettingsPage from './pages/SettingsPage';
+import VolunteerPortal from './pages/VolunteerPortal';
 import DashboardLayout from './components/DashboardLayout';
 import AddVolunteerModal from './components/AddVolunteerModal';
 import CreateTeamModal from './components/CreateTeamModal';
@@ -40,9 +41,10 @@ export default function App() {
   const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
 
   const isAuthenticated = Boolean(user);
-  // Only Coordinators may reconnect the cluster / reseed, so only they get an
-  // actionable database pill.
-  const canManageDb = user?.role === 'Coordinator';
+  // Coordinators manage the whole event. Every other role is restricted to
+  // their own assignment, team and shifts (enforced by the API as well).
+  const isCoordinator = user?.role === 'Coordinator';
+  const canManageDb = isCoordinator;
 
   // Navigation handler with browser pushState
   const navigate = (path) => {
@@ -267,6 +269,16 @@ export default function App() {
     }
   }, [checkingSession, isAuthenticated, currentPath]);
 
+  // Volunteers have one workspace page. Normalise any coordinator-only URL they
+  // might land on (bookmark, stale link) back to it.
+  useEffect(() => {
+    if (checkingSession || !isAuthenticated || isCoordinator) return;
+    if (currentPath.startsWith('/dashboard') && currentPath !== '/dashboard') {
+      window.history.replaceState({}, '', '/dashboard');
+      setCurrentPath('/dashboard');
+    }
+  }, [checkingSession, isAuthenticated, isCoordinator, currentPath]);
+
   const handleLoginSuccess = (userData, token) => {
     if (token) setToken(token);
     setUser(userData);
@@ -301,7 +313,20 @@ export default function App() {
   } else if (isDashboardRoute) {
     let dashboardContent = null;
 
-    if (currentPath === '/dashboard') {
+    if (!isCoordinator) {
+      // Restricted workspace: own assignment, team, shifts and profile only.
+      dashboardContent = (
+        <VolunteerPortal
+          user={user}
+          eventInfo={eventInfo}
+          volunteers={volunteers}
+          teams={teams}
+          tasks={tasks}
+          onRefresh={loadData}
+          onShowToast={showToast}
+        />
+      );
+    } else if (currentPath === '/dashboard') {
       dashboardContent = (
         <DashboardOverview
           eventInfo={eventInfo}

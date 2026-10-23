@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
+const Volunteer = require('../models/Volunteer');
 const memoryStore = require('../store/memoryStore');
 const { getDBStatus } = require('../config/db');
 const { toPublicUser } = require('../lib/views');
@@ -98,6 +100,7 @@ router.post('/login', async (req, res) => {
     }
 
     clearFailures(req, email);
+    await linkVolunteerAccount(user, connected);
     user.lastLoginAt = new Date();
     if (connected) await user.save();
     else await memoryStore.touchLastLogin(user._id);
@@ -115,7 +118,7 @@ router.post('/login', async (req, res) => {
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
-  const { name, email, password, campusOrg } = req.body;
+  const { name, email, password, campusOrg, role: requestedRole, coordinatorCode } = req.body || {};
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required' });
@@ -125,6 +128,19 @@ router.post('/register', async (req, res) => {
   }
 
   try {
+    // Coordinator accounts can administer the whole event (including wiping and
+    // reseeding the database), so self-registration is gated by a server-side
+    // invite code. Without the env var the option is disabled entirely.
+    const wantsCoordinator = String(requestedRole || '').toLowerCase() === 'coordinator';
+    if (wantsCoordinator) {
+      if (!process.env.COORDINATOR_INVITE_CODE) {
+        return res.status(403).json({ error: 'Coordinator signup is disabled on this server' });
+      }
+      if (!verifyCoordinatorCode(coordinatorCode)) {
+        return res.status(403).json({ error: 'Invalid coordinator invite code' });
+      }
+    }
+
     const { connected } = getDBStatus();
     const normalised = String(email).toLowerCase().trim();
     const existing = connected
@@ -134,17 +150,19 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
 
-    // Least privilege: signing up never grants Coordinator, because that role
-    // guards the destructive system endpoints (wipe + reseed, reconnect cluster).
-    // The very first account on an empty deployment is promoted to Coordinator
-    // so a fresh install cannot end up with nobody able to administer it.
-    const role = await resolveRegistrationRole(connected);
+    // Least privilege: ordinary signups are Volunteers, because the Coordinator
+    // role guards the destructive system endpoints (wipe + reseed, reconnect
+    // cluster). The very first account on an empty deployment is promoted to
+    // Coordinator so a fresh install cannot end up with nobody able to
+    // administer it. An invite code is the only other way to get the role.
+    let role = await resolveRegistrationRole(connected);
+    if (wantsCoordinator) role = 'Coordinator';
 
     let created;
     if (connected) {
       // The pre-save hook hashes the password; it is never stored in plaintext.
       created = await User.create({
-        name: name || 'Coordinator',
+        name: name || 'Volunteer',
         email: normalised,
         password,
         role,
@@ -152,13 +170,15 @@ router.post('/register', async (req, res) => {
       });
     } else {
       created = await memoryStore.createUser({
-        name: name || 'Coordinator',
+        name: name || 'Volunteer',
         email: normalised,
         password,
         role,
         campusOrg: campusOrg || 'Student Activities Board',
       });
     }
+
+    await linkVolunteerAccount(created, connected);
 
     return res.status(201).json({
       success: true,
@@ -172,6 +192,46 @@ router.post('/register', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+/**
+ * Constant-time check of the coordinator invite code. A missing/blank env var
+ * disables coordinator self-registration rather than falling back to a default
+ * code that anyone could read out of the source.
+ */
+function verifyCoordinatorCode(candidate) {
+  const expected = process.env.COORDINATOR_INVITE_CODE || '';
+  const supplied = String(candidate || '');
+  if (!expected || !supplied) return false;
+
+  const expectedBuffer = Buffer.from(expected);
+  const suppliedBuffer = Buffer.from(supplied);
+  if (expectedBuffer.length !== suppliedBuffer.length) return false;
+
+  return crypto.timingSafeEqual(expectedBuffer, suppliedBuffer);
+}
+
+/**
+ * Connect a Volunteer account to the person record the coordinator added.
+ *
+ * Matching on email is what makes the normal flow "coordinator adds a volunteer
+ * with their campus email -> that person signs up -> they immediately see their
+ * assignment" work without an invite token. Coordinators are never linked.
+ */
+async function linkVolunteerAccount(user, connected) {
+  if (!user || user.role === 'Coordinator' || user.volunteerId) return user;
+
+  const email = String(user.email || '').toLowerCase().trim();
+  const volunteer = connected
+    ? await Volunteer.findOne({ email }).select('_id').lean()
+    : memoryStore.findVolunteerByEmail(email);
+
+  if (!volunteer) return user;
+
+  user.volunteerId = volunteer._id;
+  if (connected) await user.save();
+  else memoryStore.setUserVolunteerId(user._id, volunteer._id);
+  return user;
+}
 
 /** Burn roughly one bcrypt's worth of time, so a miss looks like a wrong password. */
 async function hashEqualiser(connected) {

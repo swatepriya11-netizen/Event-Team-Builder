@@ -10,8 +10,10 @@ const Task = require('../models/Task');
 const memoryStore = require('../store/memoryStore');
 const { getDBStatus } = require('../config/db');
 const { requireEventId } = require('../lib/eventScope');
-const { buildVolunteerViews } = require('../lib/views');
+const { buildVolunteerViews, buildTeamViews } = require('../lib/views');
 const { slugify } = require('../lib/ids');
+const { isCoordinator, resolveVolunteerId } = require('../lib/access');
+const { requireRole } = require('../middleware/auth');
 
 // Load the normalised records needed to build volunteer read-models.
 async function loadVolunteerContext(eventId, connected) {
@@ -59,6 +61,20 @@ router.get('/', async (req, res) => {
     const ctx = await loadVolunteerContext(eventId, connected);
     let views = buildVolunteerViews(ctx.volunteers, ctx.assignments, ctx);
 
+    // Volunteers see themselves and their own team members - never the whole
+    // event roster.
+    if (!isCoordinator(req.user)) {
+      const volunteerId = await resolveVolunteerId(req.user);
+      if (!volunteerId) return res.json([]);
+      const me = views.find((v) => String(v._id) === String(volunteerId));
+      const teamId = me?.teamId || null;
+      views = views.filter(
+        (v) =>
+          String(v._id) === String(volunteerId) ||
+          (teamId && String(v.teamId) === String(teamId))
+      );
+    }
+
     // status/teamId filter on the *derived* view, which is why this can be a
     // plain in-memory filter instead of a half-broken Mongo query.
     if (status && status !== 'All') {
@@ -91,6 +107,8 @@ router.get('/', async (req, res) => {
  */
 router.get('/matches', async (req, res) => {
   try {
+    // Matching is a coordinator planning tool, not something a volunteer uses.
+    if (!isCoordinator(req.user)) return res.json([]);
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);
     if (!eventId) return;
@@ -166,6 +184,139 @@ function buildMatches(volunteers, teams) {
   return recommendations;
 }
 
+/**
+ * GET /api/volunteers/me?eventId=...
+ * The signed-in volunteer's own profile, team and teammates. Deliberately
+ * narrower than GET /:id so the portal never depends on a roster lookup.
+ */
+router.get('/me', async (req, res) => {
+  try {
+    const { connected } = getDBStatus();
+    const eventId = await requireEventId(req, res);
+    if (!eventId) return;
+
+    const volunteerId = await resolveVolunteerId(req.user);
+    if (!volunteerId) {
+      return res.status(404).json({
+        error: 'No volunteer profile is linked to this account yet. Ask your coordinator to add you using this email address.',
+      });
+    }
+
+    const ctx = await loadVolunteerContext(eventId, connected);
+    const views = buildVolunteerViews(ctx.volunteers, ctx.assignments, ctx);
+    const me = views.find((v) => String(v._id) === String(volunteerId));
+    if (!me) {
+      return res.status(404).json({ error: 'You are not enrolled in this event' });
+    }
+
+    const team = me.teamId
+      ? buildTeamViews(ctx.teams, ctx).find((t) => String(t._id) === String(me.teamId)) || null
+      : null;
+    const teammates = me.teamId
+      ? views.filter((v) => String(v.teamId) === String(me.teamId))
+      : [me];
+
+    res.json({ volunteer: me, team, teammates });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * PUT /api/volunteers/me?eventId=...
+ * Self-service edits. Only contact details, availability and check-in are
+ * accepted; name, email, skills, role and team placement stay Coordinator-owned.
+ */
+router.put('/me', async (req, res) => {
+  try {
+    const { connected } = getDBStatus();
+    const eventId = await requireEventId(req, res);
+    if (!eventId) return;
+
+    const volunteerId = await resolveVolunteerId(req.user);
+    if (!volunteerId) {
+      return res.status(404).json({ error: 'No volunteer profile is linked to this account yet' });
+    }
+
+    const body = req.body || {};
+    const ALLOWED_AVAILABILITY = ['Morning', 'Evening', 'All Day'];
+
+    const personPatch = {};
+    if (body.phone !== undefined) personPatch.phone = String(body.phone).slice(0, 40);
+
+    const assignmentPatch = {};
+    if (body.availability !== undefined) {
+      assignmentPatch.availability = Array.isArray(body.availability)
+        ? body.availability.filter((a) => ALLOWED_AVAILABILITY.includes(a)).slice(0, 3)
+        : [];
+    }
+    if (body.checkInStatus !== undefined) {
+      assignmentPatch.checkedInAt = body.checkInStatus ? new Date() : null;
+    }
+
+    if (connected) {
+      const volunteer = await Volunteer.findById(volunteerId);
+      if (!volunteer) return res.status(404).json({ error: 'Volunteer not found' });
+
+      if (Object.keys(personPatch).length) {
+        Object.assign(volunteer, personPatch, { updatedAt: new Date() });
+        await volunteer.save();
+      }
+
+      let assignment = await Assignment.findOne({ eventId, volunteerId });
+      if (!assignment) {
+        assignment = await Assignment.create({
+          eventId,
+          volunteerId,
+          teamId: null,
+          role: 'General Crew',
+          availability: assignmentPatch.availability || ['Morning'],
+          ...assignmentPatch,
+        });
+      } else if (Object.keys(assignmentPatch).length) {
+        Object.assign(assignment, assignmentPatch, { updatedAt: new Date() });
+        await assignment.save();
+      }
+
+      const [teams, skills] = await Promise.all([
+        Team.find({ eventId }).lean(),
+        Skill.find({}).lean(),
+      ]);
+      const [view] = buildVolunteerViews([volunteer.toObject()], [assignment.toObject()], {
+        teams,
+        skills,
+      });
+      memoryStore.syncAll({
+        volunteers: await Volunteer.find({}).lean(),
+        assignments: await Assignment.find({}).lean(),
+      });
+      return res.json(view);
+    }
+
+    const updated = memoryStore.updateVolunteer(eventId, volunteerId, {
+      ...personPatch,
+      ...assignmentPatch,
+      ...(body.checkInStatus !== undefined
+        ? { checkInStatus: Boolean(body.checkInStatus) }
+        : {}),
+      ...(body.availability !== undefined
+        ? { availability: assignmentPatch.availability }
+        : {}),
+    });
+    if (!updated) return res.status(404).json({ error: 'Volunteer not found' });
+
+    const ctx = {
+      assignments: memoryStore.getAssignments(eventId),
+      teams: memoryStore.getTeams(eventId),
+      skills: memoryStore.getSkills(),
+    };
+    const [view] = buildVolunteerViews([updated], ctx.assignments, ctx);
+    res.json(view);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/volunteers/:id
 router.get('/:id', async (req, res) => {
   try {
@@ -178,6 +329,19 @@ router.get('/:id', async (req, res) => {
       (v) => v._id === req.params.id
     );
     if (!view) return res.status(404).json({ error: 'Volunteer not found' });
+
+    if (!isCoordinator(req.user)) {
+      const volunteerId = await resolveVolunteerId(req.user);
+      const me = buildVolunteerViews(ctx.volunteers, ctx.assignments, ctx).find(
+        (v) => String(v._id) === String(volunteerId)
+      );
+      const isSelf = String(view._id) === String(volunteerId);
+      const isTeammate = Boolean(me?.teamId) && String(view.teamId) === String(me.teamId);
+      if (!isSelf && !isTeammate) {
+        return res.status(403).json({ error: 'You can only view your own profile and team' });
+      }
+    }
+
     res.json(view);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -185,7 +349,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/volunteers?eventId=... - creates the person AND enrols them
-router.post('/', async (req, res) => {
+router.post('/', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);
@@ -272,7 +436,7 @@ router.post('/', async (req, res) => {
  * Accepts both person fields (name/email/skills) and assignment fields
  * (teamId/role/availability/checkInStatus) and routes each to the right document.
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);
@@ -358,7 +522,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/volunteers/:id?eventId=... - removes them from THIS event
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);

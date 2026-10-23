@@ -162,6 +162,8 @@ export const api = {
 
   // Volunteers
   getVolunteers: (params = {}) => request(`/volunteers${qs(params)}`),
+  getMyVolunteer: () => request(`/volunteers/me${qs()}`),
+  updateMyVolunteer: (data) => request(`/volunteers/me${qs()}`, { method: 'PUT', body: data }),
   getVolunteer: (id) => request(`/volunteers/${id}${qs()}`),
   createVolunteer: (data) => request(`/volunteers${qs()}`, { method: 'POST', body: data }),
   updateVolunteer: (id, data) => request(`/volunteers/${id}${qs()}`, { method: 'PUT', body: data }),

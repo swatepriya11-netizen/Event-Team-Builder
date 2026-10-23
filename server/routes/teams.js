@@ -10,6 +10,8 @@ const { getDBStatus } = require('../config/db');
 const { requireEventId } = require('../lib/eventScope');
 const { buildTeamViews } = require('../lib/views');
 const { uniqueSlug, slugify } = require('../lib/ids');
+const { isCoordinator, resolveVolunteerId, getEventAssignment } = require('../lib/access');
+const { requireRole } = require('../middleware/auth');
 
 // Load everything needed to render a team read-model.
 async function loadTeamContext(eventId, connected) {
@@ -50,7 +52,15 @@ router.get('/', async (req, res) => {
     if (!eventId) return;
 
     const ctx = await loadTeamContext(eventId, connected);
-    res.json(buildTeamViews(ctx.teams, ctx));
+    const views = buildTeamViews(ctx.teams, ctx);
+
+    // Volunteers only see the team they are on.
+    if (isCoordinator(req.user)) return res.json(views);
+
+    const volunteerId = await resolveVolunteerId(req.user);
+    const assignment = await getEventAssignment(eventId, volunteerId);
+    if (!assignment?.teamId) return res.json([]);
+    res.json(views.filter((t) => String(t._id) === String(assignment.teamId)));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -67,6 +77,14 @@ router.get('/:id', async (req, res) => {
     const [view] = buildTeamViews(ctx.teams, ctx).filter((t) => t._id === req.params.id || t.code === req.params.id);
     if (!view) return res.status(404).json({ error: 'Team not found' });
 
+    if (!isCoordinator(req.user)) {
+      const volunteerId = await resolveVolunteerId(req.user);
+      const assignment = await getEventAssignment(eventId, volunteerId);
+      if (!assignment?.teamId || String(assignment.teamId) !== String(view._id)) {
+        return res.status(403).json({ error: 'You can only view your own team' });
+      }
+    }
+
     const { buildVolunteerViews } = require('../lib/views');
     const roster = buildVolunteerViews(ctx.volunteers, ctx.assignments, ctx)
       .filter((v) => v.teamId === view._id);
@@ -77,7 +95,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/teams?eventId=...
-router.post('/', async (req, res) => {
+router.post('/', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);
@@ -119,7 +137,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/teams/:id?eventId=...
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);
@@ -164,7 +182,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/teams/:id?eventId=... - unassigns crew, never deletes people
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);

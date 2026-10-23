@@ -22,7 +22,11 @@ async function ensureDemoCoordinator() {
     results.push({ user, created: true });
   }
 
-  return results[0];
+  return {
+    user: results[0]?.user || null,
+    created: results.some((r) => r.created),
+    accounts: results,
+  };
 }
 
 module.exports = { ensureDemoCoordinator };

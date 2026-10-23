@@ -87,7 +87,7 @@ app.listen(PORT, async () => {
       const { ensureDemoCoordinator } = require('./seed/ensureCoordinator');
       const { created } = await ensureDemoCoordinator();
       if (created) {
-        console.log('[Auth] Demo coordinator created (coordinator@campus.edu / password123)');
+        console.log('[Auth] Demo accounts created (coordinator@campus.edu / password123, ananya.shah@campus.edu / password123)');
       }
     } catch (err) {
       console.warn('[Auth] Could not verify demo coordinator:', err.message);

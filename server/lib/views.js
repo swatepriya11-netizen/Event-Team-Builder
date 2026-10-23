@@ -144,6 +144,7 @@ function toPublicUser(user) {
     email: user.email,
     role: user.role,
     campusOrg: user.campusOrg,
+    volunteerId: user.volunteerId ? String(user.volunteerId) : null,
   };
 }
 

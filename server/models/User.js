@@ -32,6 +32,14 @@ const UserSchema = new mongoose.Schema({
     enum: ['Coordinator', 'Lead', 'Volunteer'],
     default: 'Coordinator',
   },
+  // Links a signed-in Volunteer account to their person record in the volunteer
+  // directory. Resolved by email at sign-in when it is not already set, so an
+  // account created before the coordinator added the volunteer still connects.
+  volunteerId: {
+    type: String,
+    ref: 'Volunteer',
+    default: null,
+  },
   campusOrg: {
     type: String,
     default: 'Student Cultural Board',

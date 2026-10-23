@@ -10,6 +10,8 @@ const { getDBStatus } = require('../config/db');
 const { resolveEventId } = require('../lib/eventScope');
 const { buildEventView } = require('../lib/views');
 const { slugify, uniqueSlug } = require('../lib/ids');
+const { isCoordinator, resolveVolunteerId, listEnrolledEventIds, canAccessEvent } = require('../lib/access');
+const { requireRole } = require('../middleware/auth');
 
 /**
  * Events are now a real collection. Previously GET /api/events returned a single
@@ -53,6 +55,15 @@ router.get('/', async (req, res) => {
       activeId = memoryStore.getActiveEvent()?._id || null;
     }
 
+    // A volunteer only sees the events they are enrolled in; coordinators see
+    // every event. This is also what keeps the event switcher relevant.
+    if (!isCoordinator(req.user)) {
+      const volunteerId = await resolveVolunteerId(req.user);
+      const enrolled = await listEnrolledEventIds(volunteerId);
+      list = list.filter((e) => enrolled.map(String).includes(String(e._id)));
+      activeId = list.find((e) => e.isActive)?._id || list[0]?._id || null;
+    }
+
     res.json(list.map((e) => buildEventView(e, { isActive: e._id === activeId })));
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -64,6 +75,9 @@ router.get('/active', async (req, res) => {
   try {
     const eventId = await resolveEventId(req);
     if (!eventId) return res.status(404).json({ error: 'No events exist yet' });
+    if (!(await canAccessEvent(req.user, eventId))) {
+      return res.status(403).json({ error: 'You are not enrolled in this event' });
+    }
     const { connected } = getDBStatus();
     const event = connected
       ? await Event.findById(eventId).lean()
@@ -83,6 +97,9 @@ router.get('/:id', async (req, res) => {
       ? await Event.findOne({ $or: [{ _id: req.params.id }, { slug: req.params.id }] }).lean()
       : memoryStore.getEvent(req.params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
+    if (!(await canAccessEvent(req.user, event._id))) {
+      return res.status(403).json({ error: 'You are not enrolled in this event' });
+    }
     res.json(buildEventView(event));
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -90,7 +107,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/events - create an event
-router.post('/', async (req, res) => {
+router.post('/', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const body = { ...req.body };
@@ -140,7 +157,7 @@ router.post('/', async (req, res) => {
 });
 
 // PUT /api/events/:id
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const body = { ...req.body };
@@ -181,7 +198,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // POST /api/events/:id/activate - exactly one event is the default scope
-router.post('/:id/activate', async (req, res) => {
+router.post('/:id/activate', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     if (connected) {
@@ -202,7 +219,7 @@ router.post('/:id/activate', async (req, res) => {
 });
 
 // DELETE /api/events/:id - cascades to everything scoped to the event
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     if (connected) {

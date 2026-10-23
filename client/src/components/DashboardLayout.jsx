@@ -27,17 +27,23 @@ export default function DashboardLayout({
   user,
   onLogout
 }) {
-  const navItems = [
-    { label: 'Overview', path: '/dashboard', icon: LayoutDashboard },
-    { label: 'Volunteers', path: '/dashboard/volunteers', icon: Users },
-    { label: 'Team builder', path: '/dashboard/teams', icon: Layers },
-    { label: 'Tasks & shifts', path: '/dashboard/tasks', icon: CalendarCheck },
-    { label: 'Settings', path: '/dashboard/settings', icon: Settings },
-  ];
+  const isCoordinator = user?.role === 'Coordinator';
+
+  // Volunteers get one page scoped to their own assignment; coordinators get the
+  // full management workspace.
+  const navItems = isCoordinator
+    ? [
+        { label: 'Overview', path: '/dashboard', icon: LayoutDashboard },
+        { label: 'Volunteers', path: '/dashboard/volunteers', icon: Users },
+        { label: 'Team builder', path: '/dashboard/teams', icon: Layers },
+        { label: 'Tasks & shifts', path: '/dashboard/tasks', icon: CalendarCheck },
+        { label: 'Settings', path: '/dashboard/settings', icon: Settings },
+      ]
+    : [{ label: 'My dashboard', path: '/dashboard', icon: LayoutDashboard }];
 
   // Changing the cluster wipes and reseeds collections, so only Coordinators see
   // an actionable status pill.
-  const canManageDb = user?.role === 'Coordinator';
+  const canManageDb = isCoordinator;
 
   return (
     <div className="dashboard-shell">

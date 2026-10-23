@@ -8,6 +8,8 @@ const memoryStore = require('../store/memoryStore');
 const { getDBStatus } = require('../config/db');
 const { requireEventId } = require('../lib/eventScope');
 const { buildTaskViews } = require('../lib/views');
+const { isCoordinator, resolveVolunteerId, scopeTasks } = require('../lib/access');
+const { requireRole } = require('../middleware/auth');
 
 // Priority rank - sorting by the raw string yields High, Low, Medium.
 const PRIORITY_RANK = { High: 0, Medium: 1, Low: 2 };
@@ -67,7 +69,7 @@ router.get('/', async (req, res) => {
     if (!eventId) return;
 
     const ctx = await loadTaskContext(eventId, connected);
-    const views = buildTaskViews(ctx.tasks, ctx);
+    const views = await scopeTasks(req.user, eventId, buildTaskViews(ctx.tasks, ctx));
 
     views.sort(
       (a, b) =>
@@ -88,7 +90,7 @@ router.get('/metrics', async (req, res) => {
     if (!eventId) return;
 
     const ctx = await loadTaskContext(eventId, connected);
-    const tasks = buildTaskViews(ctx.tasks, ctx);
+    const tasks = await scopeTasks(req.user, eventId, buildTaskViews(ctx.tasks, ctx));
 
     const totalTasks = tasks.length;
     const highPriorityTasks = tasks.filter((t) => t.priority === 'High').length;
@@ -134,7 +136,8 @@ router.get('/:id', async (req, res) => {
     if (!eventId) return;
 
     const ctx = await loadTaskContext(eventId, connected);
-    const view = buildTaskViews(ctx.tasks, ctx).find((t) => t._id === req.params.id);
+    const views = await scopeTasks(req.user, eventId, buildTaskViews(ctx.tasks, ctx));
+    const view = views.find((t) => t._id === req.params.id);
     if (!view) return res.status(404).json({ error: 'Task not found' });
     res.json(view);
   } catch (error) {
@@ -143,7 +146,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/tasks?eventId=...
-router.post('/', async (req, res) => {
+router.post('/', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);
@@ -198,6 +201,28 @@ router.put('/:id', async (req, res) => {
     const eventId = await requireEventId(req, res);
     if (!eventId) return;
 
+    // Volunteers may only move a task they are personally assigned to between
+    // statuses. Ignore every other field rather than letting a crafted request
+    // rewrite the roster, schedule or team.
+    if (!isCoordinator(req.user)) {
+      const volunteerId = await resolveVolunteerId(req.user);
+      const rawTask = connected
+        ? await Task.findOne({ _id: req.params.id, eventId }).lean()
+        : memoryStore.getTask(eventId, req.params.id);
+      if (!rawTask) return res.status(404).json({ error: 'Task not found' });
+
+      const isAssignee = (rawTask.assignees || []).map(String).includes(String(volunteerId));
+      if (!isAssignee) {
+        return res.status(403).json({ error: 'You can only update tasks assigned to you' });
+      }
+
+      const status = req.body?.status;
+      if (!['Pending', 'In Progress', 'Completed'].includes(status)) {
+        return res.status(400).json({ error: 'You may only update the task status' });
+      }
+      req.body = { status };
+    }
+
     const payload = { ...req.body };
     delete payload._id;
     delete payload.eventId;
@@ -237,7 +262,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/tasks/:id?eventId=...
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireRole('Coordinator'), async (req, res) => {
   try {
     const { connected } = getDBStatus();
     const eventId = await requireEventId(req, res);
